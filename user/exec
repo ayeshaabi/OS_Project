@@ -1,0 +1,103 @@
+#include "kernel/types.h"
+#include "kernel/stat.h"
+#include "user/user.h"
+#include "kernel/fs.h"
+#include "kernel/fcntl.h"
+#include "kernel/param.h"
+
+// Helper: find last occurrence of character c in string s
+char* my_strrchr(char *s, char c) {
+    char *last = 0;
+    for(; *s; s++){
+        if(*s == c) last = s;
+    }
+    return last;
+}
+
+// Recursive find function
+void find(char *path, char *target, char *exec_cmd){
+    char buf[512], *p;
+    int fd;
+    struct dirent de;
+    struct stat st;
+
+    // open file/directory
+    if((fd = open(path, O_RDONLY)) < 0){
+        fprintf(2, "find: cannot open %s\n", path);
+        return;
+    }
+
+    // get file stats
+    if(fstat(fd, &st) < 0){
+        fprintf(2, "find: cannot stat %s\n", path);
+        close(fd);
+        return;
+    }
+
+    switch(st.type){
+    case T_FILE:
+        // get last component of path
+        p = my_strrchr(path, '/');
+        if(p) p++; else p = path;
+
+        if(strcmp(p, target) == 0){
+            if(exec_cmd){
+                if(fork() == 0){
+                    // build argv for exec
+                    char *argv[MAXARG];
+                    argv[0] = exec_cmd;
+                    argv[1] = path;
+                    argv[2] = 0;
+                    exec(argv[0], argv);
+                    exit(1); // exec failed
+                }
+                wait(0);
+            } else {
+                printf("%s\n", path);
+            }
+        }
+        break;
+
+    case T_DIR:
+        if(strlen(path) + 1 + DIRSIZ + 1 > sizeof buf){
+            printf("find: path too long\n");
+            break;
+        }
+        strcpy(buf, path);
+        p = buf + strlen(buf);
+        *p++ = '/';
+
+        // read directory entries
+        while(read(fd, &de, sizeof(de)) == sizeof(de)){
+            if(de.inum == 0) continue;
+            if(strcmp(de.name, ".") == 0 || strcmp(de.name, "..") == 0) continue;
+
+            int i;
+            for(i = 0; i < DIRSIZ && de.name[i] != '\0'; i++)
+                p[i] = de.name[i];
+            p[i] = 0;
+
+            find(buf, target, exec_cmd);
+        }
+        break;
+    }
+
+    close(fd);
+}
+
+int main(int argc, char *argv[]){
+    char *exec_cmd = 0;
+
+    if(argc < 3){
+        fprintf(2, "Usage: find <path> <filename> [-exec cmd]\n");
+        exit(1);
+    }
+
+    // handle -exec option
+    if(argc >= 5 && strcmp(argv[3], "-exec") == 0){
+        exec_cmd = argv[4];
+    }
+
+    find(argv[1], argv[2], exec_cmd);
+    exit(0);
+}

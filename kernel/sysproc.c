@@ -107,3 +107,24 @@ sys_uptime(void)
   release(&tickslock);
   return xticks;
 }
+uint64
+sys_mysleep(void)
+{
+  int n;              // number of ticks to sleep
+  uint ticks0;        // store current tick count
+
+  argint(0, &n);      // get the argument from user program (number of ticks)
+
+  if(n < 0)           // invalid argument
+    return -1;
+
+  acquire(&tickslock);        // lock the ticks variable
+  ticks0 = ticks;             // store current tick count
+  while(ticks - ticks0 < n){  // wait until n ticks pass
+    sleep(&ticks, &tickslock);  // sleep on the ticks channel
+  }
+  release(&tickslock);        // release the lock
+
+  return 0;                   // return success
+}
+
