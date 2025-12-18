@@ -16,6 +16,7 @@
 #include "file.h"
 #include "fcntl.h"
 
+
 // Fetch the nth word-sized system call argument as a file descriptor
 // and return both the descriptor and the corresponding struct file.
 static int
@@ -300,7 +301,6 @@ create(char *path, short type, short major, short minor)
   iunlockput(dp);
   return 0;
 }
-
 uint64
 sys_open(void)
 {
@@ -333,6 +333,31 @@ sys_open(void)
       end_op();
       return -1;
     }
+  }
+
+  // Follow symbolic links unless O_NOFOLLOW is set
+  int depth = 0;
+  while(ip->type == T_SYMLINK && !(omode & O_NOFOLLOW)){
+    if(depth++ > 10){     // prevent cycles
+      iunlockput(ip);
+      end_op();
+      return -1;
+    }
+
+    char linkpath[MAXPATH];
+    if(readi(ip, 0, (uint64)linkpath, 0, MAXPATH) <= 0){
+      iunlockput(ip);
+      end_op();
+      return -1;
+    }
+
+    iunlockput(ip);           // unlock current symlink inode
+    ip = namei(linkpath);     // follow link
+    if(ip == 0){
+      end_op();
+      return -1;
+    }
+    ilock(ip);                // lock the inode we are following
   }
 
   if(ip->type == T_DEVICE && (ip->major < 0 || ip->major >= NDEV)){
@@ -369,6 +394,8 @@ sys_open(void)
 
   return fd;
 }
+
+
 
 uint64
 sys_mkdir(void)
@@ -473,7 +500,6 @@ sys_exec(void)
     kfree(argv[i]);
   return -1;
 }
-
 uint64
 sys_pipe(void)
 {
@@ -503,3 +529,20 @@ sys_pipe(void)
   }
   return 0;
 }
+uint64 sys_symlink(void) {
+    char target[MAXPATH], path[MAXPATH];
+
+    if(argstr(0, target, MAXPATH) < 0 || argstr(1, path, MAXPATH) < 0)
+        return -1;
+
+    struct inode *ip = create(path, T_SYMLINK, 0, 0);
+    if(ip == 0)
+        return -1;
+
+    ilock(ip);
+    // write target path into symlink's data block
+    writei(ip, 0, (uint64)target, 0, strlen(target)+1);
+    iunlockput(ip);
+    return 0;
+}
+
